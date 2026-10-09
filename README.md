@@ -27,6 +27,7 @@ gaps, and next actions.
 - [Problem Statement](docs/product/2-problem-statement.md)
 - [Personas](docs/product/3-personas.md)
 - [Use Cases](docs/product/4-use-cases.md)
+- [Functional Requirements](docs/product/5-functional-requirements.md)
 
 ## Architecture
 
