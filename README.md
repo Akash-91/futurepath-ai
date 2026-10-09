@@ -23,10 +23,10 @@ gaps, and next actions.
 
 ### Product Documentation
 
-- [Product Vision](docs/product/product-vision.md)
-- [Problem Statement](docs/product/problem-statement.md)
-- [Personas](docs/product/personas.md)
-- [Use Cases](docs/product/use-cases.md)
+- [Product Vision](docs/product/1-product-vision.md)
+- [Problem Statement](docs/product/2-problem-statement.md)
+- [Personas](docs/product/3-personas.md)
+- [Use Cases](docs/product/4-use-cases.md)
 
 ## Architecture
 
