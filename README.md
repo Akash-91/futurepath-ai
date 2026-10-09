@@ -42,8 +42,8 @@ system limitations.
 
 - [x] Product Vision
 - [x] Problem Statement
-- [ ] Personas
-- [ ] Use Cases
+- [x] Personas
+- [x] Use Cases
 - [ ] Functional Requirements
 - [ ] Non-Functional Requirements
 - [ ] System Context
