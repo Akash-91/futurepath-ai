@@ -28,6 +28,7 @@ gaps, and next actions.
 - [Personas](docs/product/3-personas.md)
 - [Use Cases](docs/product/4-use-cases.md)
 - [Functional Requirements](docs/product/5-functional-requirements.md)
+- [Non Functional Requirements](docs/product/6-non-functional-requirements.md)
 
 ## Architecture
 
@@ -45,8 +46,8 @@ system limitations.
 - [x] Problem Statement
 - [x] Personas
 - [x] Use Cases
-- [ ] Functional Requirements
-- [ ] Non-Functional Requirements
+- [x] Functional Requirements
+- [x] Non-Functional Requirements
 - [ ] System Context
 - [ ] High-Level Design
 - [ ] Data Model
