@@ -41,9 +41,6 @@ system limitations.
 - [Architecture v0.1](docs/architecture/architecture-v0.1.md)
 - [HLD Roadmap](docs/architecture/HLD_roadmap.md)
 - [Final End-to-End HLD](docs/architecture/Final_HLD.md)
-- [Release 1 HLD — Career Profile Intelligence](docs/architecture/Release_1.md)
-- [Release 2 HLD — Career Gap & Target Role Intelligence](docs/architecture/Release_2.md)
-- [Release 3 HLD — Market & Learning Intelligence](docs/architecture/Release_3.md)
 
 ### Architecture Decisions
 
