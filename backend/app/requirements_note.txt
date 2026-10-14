@@ -1,0 +1,2 @@
+EmailStr uses the optional email-validator package. Install it with:
+pip install email-validator

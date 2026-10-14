@@ -1,0 +1,31 @@
+# Dependencies/build output
+node_modules/
+.next/
+out/
+dist/
+coverage/
+
+# Environment secrets (keep example files tracked)
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local database/state
+backend/data/
+backend/*.db
+*.sqlite
+*.sqlite3
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
