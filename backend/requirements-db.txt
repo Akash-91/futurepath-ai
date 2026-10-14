@@ -1,0 +1,1 @@
+SQLAlchemy>=2.0,<3.0\nalembic>=1.13,<2.0\npsycopg[binary]>=3.2,<4.0\n
