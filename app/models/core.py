@@ -1,19 +1,28 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
+
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("auth_provider", "auth_subject", name="uq_users_provider_subject"), Index("ix_users_email", "email"))
+    __table_args__ = (
+        UniqueConstraint("auth_provider", "auth_subject", name="uq_users_provider_subject"),
+        Index("ix_users_email", "email"),
+        Index("ix_users_username", "username"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    email: Mapped[str | None] = mapped_column(String(320), unique=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     auth_provider: Mapped[str] = mapped_column(String(40), nullable=False)
     auth_subject: Mapped[str] = mapped_column(String(255), nullable=False)
-    email: Mapped[str | None] = mapped_column(String(320))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
 
 class Resume(Base):
     __tablename__ = "resumes"
@@ -27,9 +36,14 @@ class Resume(Base):
     checksum_sha256: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+
 class ProcessingJob(Base):
     __tablename__ = "processing_jobs"
-    __table_args__ = (CheckConstraint("status IN ('queued','running','succeeded','failed','cancelled')", name="ck_processing_jobs_status"), CheckConstraint("attempt_count >= 0 AND max_attempts > 0", name="ck_processing_jobs_attempts"), Index("ix_processing_jobs_status_created", "status", "created_at"))
+    __table_args__ = (
+        CheckConstraint("status IN ('queued','running','succeeded','failed','cancelled')", name="ck_processing_jobs_status"),
+        CheckConstraint("attempt_count >= 0 AND max_attempts > 0", name="ck_processing_jobs_attempts"),
+        Index("ix_processing_jobs_status_created", "status", "created_at"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     resume_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="CASCADE"))
