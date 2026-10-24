@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./futurepath.db"
+    database_url: str = "postgresql+psycopg://futurepath:change_me@localhost:5432/futurepath"
     jwt_secret: str = "dev-only-change-me"
     jwt_expire_minutes: int = 30
     frontend_url: str = "http://localhost:3000"
