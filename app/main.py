@@ -139,7 +139,7 @@ def upsert_career_profile(payload: CareerProfileRequest, request: Request, db: S
 
 
 @app.post("/resumes", response_model=ResumeResponse, status_code=202)
-async def upload_resume(file: UploadFile = File(...), request: Request = None, db: Session = Depends(get_db)):
+async def upload_resume(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if file.content_type != "application/pdf" or not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=415, detail="Only PDF resumes are supported.")
@@ -155,15 +155,15 @@ async def upload_resume(file: UploadFile = File(...), request: Request = None, d
     resume_id = uuid4()
     storage_key = resume_storage.key_for(user.id, resume_id)
     resume = Resume(id=resume_id, user_id=user.id, original_filename=Path(file.filename or "resume.pdf").name[:255], content_type="application/pdf", file_size_bytes=len(content), storage_key=storage_key, checksum_sha256=checksum)
-    db.add(resume)
-    db.flush()
+    db.add(resume); db.flush()
     job = ProcessingJob(user_id=user.id, resume_id=resume.id, job_type="resume_extraction", status="queued")
     db.add(job)
     try:
         resume_storage.save(storage_key, content)
         db.commit()
     except Exception:
-        db.rollback(); resume_storage.delete(storage_key); raise HTTPException(status_code=500, detail="Could not store resume.")
+        db.rollback(); resume_storage.delete(storage_key)
+        raise HTTPException(status_code=500, detail="Could not store resume.")
     process_resume_job.delay(str(job.id))
     return resume
 
