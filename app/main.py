@@ -12,30 +12,18 @@ from authlib.integrations.starlette_client import OAuth
 
 from .config import settings
 from .db import get_db
-from .models.core import AuthIdentity, User
+from .models.core import User
 from .models.career import CareerProfile
 from .schemas import CareerProfileRequest, CareerProfileResponse, RegisterRequest, UserResponse
 from .security import create_access_token, decode_access_token, hash_password, verify_password
 
 app = FastAPI(title="FuturePath AI API", version="0.3.0")
 app.add_middleware(SessionMiddleware, secret_key=settings.jwt_secret, same_site="lax", https_only=settings.cookie_secure)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[settings.frontend_url],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_url], allow_credentials=True, allow_methods=["GET", "POST", "PUT", "OPTIONS"], allow_headers=["Authorization", "Content-Type"])
 
 oauth = OAuth()
 if settings.google_client_id and settings.google_client_secret:
-    oauth.register(
-        name="google",
-        client_id=settings.google_client_id,
-        client_secret=settings.google_client_secret,
-        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile"},
-    )
+    oauth.register(name="google", client_id=settings.google_client_id, client_secret=settings.google_client_secret, server_metadata_url="https://accounts.google.com/.well-known/openid-configuration", client_kwargs={"scope": "openid email profile"})
 
 
 def set_session_cookie(response: Response, user_id: UUID) -> None:
@@ -71,8 +59,6 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Username or email is already registered.")
     user = User(username=username, email=email, password_hash=hash_password(payload.password), auth_provider="password", auth_subject=username)
     db.add(user)
-    db.flush()
-    db.add(AuthIdentity(user_id=user.id, provider="password", subject=username))
     db.commit()
     db.refresh(user)
     return user
@@ -110,9 +96,9 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
     if not email or not info.get("email_verified", False) or not subject:
         raise HTTPException(status_code=403, detail="A verified Google identity is required.")
 
-    identity = db.scalar(select(AuthIdentity).where(AuthIdentity.provider == "google", AuthIdentity.subject == subject))
-    user = db.get(User, identity.user_id) if identity else db.scalar(select(User).where(User.email == email))
-
+    user = db.scalar(select(User).where(User.auth_provider == "google", User.auth_subject == subject))
+    if not user:
+        user = db.scalar(select(User).where(User.email == email))
     if not user:
         base = (email.split("@")[0] or "futurepath")[:70]
         username, suffix = base, 1
@@ -121,14 +107,13 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
             username = f"{base[:70-len(str(suffix))]}{suffix}"
         user = User(username=username, email=email, password_hash=hash_password(secrets.token_urlsafe(48)), auth_provider="google", auth_subject=subject)
         db.add(user)
-        db.flush()
     else:
         user.email = email
-        if not identity:
-            db.add(AuthIdentity(user_id=user.id, provider="google", subject=subject))
-
+        user.auth_provider = "google"
+        user.auth_subject = subject
     db.commit()
     db.refresh(user)
+
     response = RedirectResponse(url=f"{settings.frontend_url.rstrip('/')}/welcome")
     set_session_cookie(response, user.id)
     return response
