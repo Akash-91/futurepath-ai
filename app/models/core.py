@@ -8,7 +8,7 @@ from app.db.base import Base
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = (Index("ix_users_email", "email"), Index("ix_users_username", "username"))
+    __table_args__ = (UniqueConstraint("auth_provider", "auth_subject", name="uq_users_provider_subject"), Index("ix_users_email", "email"), Index("ix_users_username", "username"))
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
     email: Mapped[str | None] = mapped_column(String(320), unique=True)
@@ -18,16 +18,6 @@ class User(Base):
     auth_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-
-class AuthIdentity(Base):
-    __tablename__ = "auth_identities"
-    __table_args__ = (UniqueConstraint("provider", "subject", name="uq_auth_identities_provider_subject"), Index("ix_auth_identities_user_id", "user_id"))
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    provider: Mapped[str] = mapped_column(String(40), nullable=False)
-    subject: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Resume(Base):
@@ -45,11 +35,7 @@ class Resume(Base):
 
 class ProcessingJob(Base):
     __tablename__ = "processing_jobs"
-    __table_args__ = (
-        CheckConstraint("status IN ('queued','running','succeeded','failed','cancelled')", name="ck_processing_jobs_status"),
-        CheckConstraint("attempt_count >= 0 AND max_attempts > 0", name="ck_processing_jobs_attempts"),
-        Index("ix_processing_jobs_status_created", "status", "created_at"),
-    )
+    __table_args__ = (CheckConstraint("status IN ('queued','running','succeeded','failed','cancelled')", name="ck_processing_jobs_status"), CheckConstraint("attempt_count >= 0 AND max_attempts > 0", name="ck_processing_jobs_attempts"), Index("ix_processing_jobs_status_created", "status", "created_at"))
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     resume_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="CASCADE"))
