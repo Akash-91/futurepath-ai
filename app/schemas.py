@@ -1,12 +1,34 @@
+from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
+
 
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=80)
     email: EmailStr
     password: str = Field(min_length=10, max_length=128)
 
+
 class UserResponse(BaseModel):
-    id: int
+    id: UUID
     username: str
-    email: str
+    email: EmailStr | None
+    is_active: bool
+    auth_provider: str
+    model_config = {"from_attributes": True}
+
+
+class CareerProfileRequest(BaseModel):
+    headline: str | None = Field(default=None, max_length=200)
+    professional_summary: str | None = None
+    current_location: str | None = Field(default=None, max_length=160)
+    preferred_locations: list[str] | None = None
+    preferred_work_modes: list[str] | None = None
+    target_roles: list[str] | None = None
+    years_experience: float | None = Field(default=None, ge=0, le=99.9)
+    is_open_to_opportunities: bool = False
+
+
+class CareerProfileResponse(CareerProfileRequest):
+    id: UUID
+    user_id: UUID
     model_config = {"from_attributes": True}
