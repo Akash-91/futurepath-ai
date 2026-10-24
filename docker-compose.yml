@@ -1,17 +1,74 @@
 services:
+  db:
+    image: postgres:17
+    container_name: futurepath-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-futurepath}
+      POSTGRES_USER: ${POSTGRES_USER:-futurepath}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - futurepath_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-futurepath} -d ${POSTGRES_DB:-futurepath}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: futurepath-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - futurepath_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     env_file:
-      - ./backend/.env
+      - .env
     environment:
-      DATABASE_URL: sqlite:////app/data/futurepath.db
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-futurepath}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-futurepath}
       FRONTEND_URL: http://localhost:3000
       BACKEND_URL: http://localhost:8000
+      REDIS_URL: redis://redis:6379/0
+      RESUME_STORAGE_PATH: /app/data/resumes
     ports:
       - "8000:8000"
     volumes:
       - ./backend/data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-futurepath}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-futurepath}
+      REDIS_URL: redis://redis:6379/0
+      RESUME_STORAGE_PATH: /app/data/resumes
+    volumes:
+      - ./backend/data:/app/data
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -22,5 +79,10 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_started
     restart: unless-stopped
+
+volumes:
+  futurepath_db_data:
+  futurepath_redis_data:
