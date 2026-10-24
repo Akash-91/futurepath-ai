@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, EmailStr, Field
 
@@ -31,4 +32,28 @@ class CareerProfileRequest(BaseModel):
 class CareerProfileResponse(CareerProfileRequest):
     id: UUID
     user_id: UUID
+    model_config = {"from_attributes": True}
+
+
+class ResumeResponse(BaseModel):
+    id: UUID
+    original_filename: str
+    content_type: str
+    file_size_bytes: int | None
+    checksum_sha256: str | None
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class ProcessingJobResponse(BaseModel):
+    id: UUID
+    resume_id: UUID | None
+    job_type: str
+    status: str
+    attempt_count: int
+    max_attempts: int
+    error_code: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
     model_config = {"from_attributes": True}
