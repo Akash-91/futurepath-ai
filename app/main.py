@@ -1,4 +1,3 @@
-from urllib.parse import urlencode
 from uuid import UUID
 import secrets
 
@@ -12,19 +11,14 @@ from sqlalchemy.orm import Session
 from authlib.integrations.starlette_client import OAuth
 
 from .config import settings
-from .db import Base, engine, get_db
-from .models.core import User
+from .db import get_db
+from .models.core import AuthIdentity, User
 from .models.career import CareerProfile
 from .schemas import CareerProfileRequest, CareerProfileResponse, RegisterRequest, UserResponse
 from .security import create_access_token, decode_access_token, hash_password, verify_password
 
 app = FastAPI(title="FuturePath AI API", version="0.3.0")
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=settings.jwt_secret,
-    same_site="lax",
-    https_only=settings.cookie_secure,
-)
+app.add_middleware(SessionMiddleware, secret_key=settings.jwt_secret, same_site="lax", https_only=settings.cookie_secure)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
@@ -46,15 +40,7 @@ if settings.google_client_id and settings.google_client_secret:
 
 def set_session_cookie(response: Response, user_id: UUID) -> None:
     token = create_access_token(str(user_id))
-    response.set_cookie(
-        key=settings.auth_cookie_name,
-        value=token,
-        httponly=True,
-        secure=settings.cookie_secure,
-        samesite="lax",
-        max_age=settings.jwt_expire_minutes * 60,
-        path="/",
-    )
+    response.set_cookie(key=settings.auth_cookie_name, value=token, httponly=True, secure=settings.cookie_secure, samesite="lax", max_age=settings.jwt_expire_minutes * 60, path="/")
 
 
 def get_current_user(request: Request, db: Session) -> User:
@@ -80,19 +66,13 @@ def health():
 
 @app.post("/auth/register", response_model=UserResponse, status_code=201)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
-    username = payload.username.strip()
-    email = payload.email.lower().strip()
-    exists = db.scalar(select(User).where(or_(User.username == username, User.email == email)))
-    if exists:
+    username, email = payload.username.strip(), payload.email.lower().strip()
+    if db.scalar(select(User).where(or_(User.username == username, User.email == email))):
         raise HTTPException(status_code=409, detail="Username or email is already registered.")
-    user = User(
-        username=username,
-        email=email,
-        password_hash=hash_password(payload.password),
-        auth_provider="password",
-        auth_subject=username,
-    )
+    user = User(username=username, email=email, password_hash=hash_password(payload.password), auth_provider="password", auth_subject=username)
     db.add(user)
+    db.flush()
+    db.add(AuthIdentity(user_id=user.id, provider="password", subject=username))
     db.commit()
     db.refresh(user)
     return user
@@ -122,47 +102,33 @@ async def google_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=503, detail="Google SSO is not configured on this deployment.")
     try:
         token = await oauth.google.authorize_access_token(request)
-        info = token.get("userinfo")
-        if not info:
-            info = await oauth.google.userinfo(token=token)
+        info = token.get("userinfo") or await oauth.google.userinfo(token=token)
     except Exception:
         raise HTTPException(status_code=401, detail="Google sign-in could not be verified. Please try again.")
 
-    email = (info.get("email") or "").lower().strip()
-    subject = str(info.get("sub") or "").strip()
+    email, subject = (info.get("email") or "").lower().strip(), str(info.get("sub") or "").strip()
     if not email or not info.get("email_verified", False) or not subject:
         raise HTTPException(status_code=403, detail="A verified Google identity is required.")
 
-    user = db.scalar(select(User).where(User.auth_provider == "google", User.auth_subject == subject))
-    if not user:
-        user = db.scalar(select(User).where(User.email == email))
+    identity = db.scalar(select(AuthIdentity).where(AuthIdentity.provider == "google", AuthIdentity.subject == subject))
+    user = db.get(User, identity.user_id) if identity else db.scalar(select(User).where(User.email == email))
 
     if not user:
-        base_username = (email.split("@")[0] or "futurepath")[:70]
-        username = base_username
-        suffix = 1
+        base = (email.split("@")[0] or "futurepath")[:70]
+        username, suffix = base, 1
         while db.scalar(select(User).where(User.username == username)):
             suffix += 1
-            username = f"{base_username[:70-len(str(suffix))]}{suffix}"
-        user = User(
-            username=username,
-            email=email,
-            password_hash=hash_password(secrets.token_urlsafe(48)),
-            auth_provider="google",
-            auth_subject=subject,
-        )
+            username = f"{base[:70-len(str(suffix))]}{suffix}"
+        user = User(username=username, email=email, password_hash=hash_password(secrets.token_urlsafe(48)), auth_provider="google", auth_subject=subject)
         db.add(user)
+        db.flush()
     else:
         user.email = email
-        if user.auth_provider == "google":
-            user.auth_subject = subject
-        elif user.auth_provider == "password":
-            # Preserve an existing password account while recording the verified Google identity.
-            # The MVP keeps one primary provider per user; a future auth-identity table can support linking.
-            pass
+        if not identity:
+            db.add(AuthIdentity(user_id=user.id, provider="google", subject=subject))
+
     db.commit()
     db.refresh(user)
-
     response = RedirectResponse(url=f"{settings.frontend_url.rstrip('/')}/welcome")
     set_session_cookie(response, user.id)
     return response
