@@ -1,7 +1,7 @@
 import hashlib
 import json
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 import httpx
@@ -240,16 +240,18 @@ def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> Non
         keys = sorted({key for item in education_items if isinstance(item, dict) for key in item.keys()})
         raise ValueError(f"R1 education item could not be normalized; received keys: {keys}")
 
-    # Flush normalized career rows before marking the extraction successful.
     db.flush()
 
     for item in data.get("projects", []):
+        if not isinstance(item, dict): continue
         name = str(item.get("name") or "").strip()
         if name: db.add(Project(user_id=user_id, name=name[:200], role=item.get("role"), description=item.get("description"), technologies=item.get("technologies"), project_url=item.get("project_url"), start_date=_date(item.get("start_date")), end_date=_date(item.get("end_date")), source_resume_id=resume.id))
     for item in data.get("certifications", []):
+        if not isinstance(item, dict): continue
         name = str(item.get("name") or "").strip()
         if name: db.add(Certification(user_id=user_id, name=name[:200], issuing_organization=item.get("issuing_organization"), credential_id=item.get("credential_id"), credential_url=item.get("credential_url"), issue_date=_date(item.get("issue_date")), expiry_date=_date(item.get("expiry_date")), does_not_expire=bool(item.get("does_not_expire", False)), source_resume_id=resume.id))
     for item in data.get("skills", []):
+        if not isinstance(item, dict): continue
         name = str(item.get("name") or "").strip()
         if not name: continue
         normalized = normalize_skill(name)
@@ -261,3 +263,55 @@ def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> Non
             existing.proficiency_level = item.get("proficiency_level"); existing.years_experience = item.get("years_experience"); existing.evidence_notes = item.get("evidence_notes"); existing.source_resume_id = resume.id
         else:
             db.add(UserSkill(user_id=user_id, skill_id=skill.id, proficiency_level=item.get("proficiency_level"), years_experience=item.get("years_experience"), last_used_date=_date(item.get("last_used_date")), evidence_notes=item.get("evidence_notes"), source_resume_id=resume.id))
+
+
+def process_resume(db: Session, job: ProcessingJob) -> None:
+    """Run the R1 extraction pipeline for one queued resume job.
+
+    The Celery task owns the transaction boundary. This function deliberately
+    does not commit, so any extraction/persistence failure rolls back together
+    with the job attempt and is recorded by app.tasks.
+    """
+    if not job.resume_id:
+        raise ValueError("Resume processing job has no resume_id")
+
+    resume = db.get(Resume, job.resume_id)
+    if not resume or resume.user_id != job.user_id:
+        raise ValueError("Resume associated with processing job was not found")
+
+    content = resume_storage.read(resume.storage_key)
+    if resume.checksum_sha256 and sha256_bytes(content) != resume.checksum_sha256:
+        raise ValueError("Stored resume checksum does not match the uploaded file")
+
+    text = extract_pdf_text(content)
+    data = llm_extract(text)
+    if not isinstance(data, dict):
+        raise ValueError("Resume extractor returned an invalid result")
+
+    extraction = db.scalar(
+        select(ResumeExtraction).where(
+            ResumeExtraction.resume_id == resume.id,
+            ResumeExtraction.extractor_version == "r1-v1",
+        )
+    )
+    if not extraction:
+        extraction = ResumeExtraction(
+            resume_id=resume.id,
+            extractor_version="r1-v1",
+            status="pending",
+        )
+        db.add(extraction)
+        db.flush()
+    else:
+        extraction.status = "pending"
+        extraction.error_code = None
+        extraction.error_message = None
+        extraction.completed_at = None
+
+    persist_extraction(db, resume, data)
+    extraction.extracted_data = data
+    extraction.status = "succeeded"
+    extraction.completed_at = datetime.now(timezone.utc)
+    extraction.error_code = None
+    extraction.error_message = None
+    db.flush()
