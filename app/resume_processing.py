@@ -177,6 +177,14 @@ def normalize_skill(name: str) -> str:
     return " ".join(name.strip().lower().split())
 
 
+def _first_value(item: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return value
+    return None
+
+
 def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> None:
     user_id = resume.user_id
     profile = db.scalar(select(CareerProfile).where(CareerProfile.user_id == user_id))
@@ -195,8 +203,14 @@ def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> Non
         company = str(item.get("company_name") or item.get("company") or "").strip(); title = str(item.get("job_title") or item.get("title") or "").strip()
         if company and title: db.add(Experience(user_id=user_id, company_name=company[:200], job_title=title[:200], employment_type=item.get("employment_type"), location=item.get("location"), start_date=_date(item.get("start_date")), end_date=_date(item.get("end_date")), is_current=bool(item.get("is_current", False)), description=item.get("description"), achievements=item.get("achievements"), source_resume_id=resume.id))
     for item in data.get("education", []):
-        institution = str(item.get("institution") or "").strip()
-        if institution: db.add(Education(user_id=user_id, institution=institution[:240], qualification=item.get("qualification"), field_of_study=item.get("field_of_study"), start_date=_date(item.get("start_date")), end_date=_date(item.get("end_date")), grade=item.get("grade"), description=item.get("description"), source_resume_id=resume.id))
+        # Accept the canonical R1 fields as well as common provider/LLM aliases.
+        # The normalized table requires only institution, so do not silently drop
+        # a valid education item when a model calls it school/university/college.
+        institution = _first_value(item, "institution", "institution_name", "school", "school_name", "university", "university_name", "college", "college_name")
+        qualification = _first_value(item, "qualification", "degree", "degree_name")
+        field_of_study = _first_value(item, "field_of_study", "field", "major", "specialization")
+        if institution:
+            db.add(Education(user_id=user_id, institution=str(institution)[:240], qualification=str(qualification)[:160] if qualification else None, field_of_study=str(field_of_study)[:160] if field_of_study else None, start_date=_date(item.get("start_date") or item.get("start_year")), end_date=_date(item.get("end_date") or item.get("end_year")), grade=item.get("grade"), description=item.get("description"), source_resume_id=resume.id))
     for item in data.get("projects", []):
         name = str(item.get("name") or "").strip()
         if name: db.add(Project(user_id=user_id, name=name[:200], role=item.get("role"), description=item.get("description"), technologies=item.get("technologies"), project_url=item.get("project_url"), start_date=_date(item.get("start_date")), end_date=_date(item.get("end_date")), source_resume_id=resume.id))
