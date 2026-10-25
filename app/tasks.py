@@ -4,7 +4,9 @@ from sqlalchemy import select
 
 from .celery_app import celery_app
 from .db.session import SessionLocal
-from .models.core import ProcessingJob
+from .education_persistence import ensure_education_persisted
+from .models.core import ProcessingJob, Resume
+from .models.career import ResumeExtraction
 from .resume_processing import process_resume
 
 
@@ -21,6 +23,20 @@ def process_resume_job(self, job_id: str):
         db.commit()
         try:
             process_resume(db, job)
+
+            # R1 postcondition: if extraction contains education, at least one
+            # corresponding education row must exist before the job succeeds.
+            resume = db.get(Resume, job.resume_id) if job.resume_id else None
+            if resume:
+                extraction = db.scalar(
+                    select(ResumeExtraction).where(
+                        ResumeExtraction.resume_id == resume.id,
+                        ResumeExtraction.extractor_version == "r1-v1",
+                    )
+                )
+                if extraction and extraction.extracted_data:
+                    ensure_education_persisted(db, resume, extraction.extracted_data)
+
             job.status = "succeeded"
             job.finished_at = datetime.now(timezone.utc)
             job.error_code = None
