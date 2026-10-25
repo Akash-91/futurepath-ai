@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .db.session import SessionLocal
 from .models.career import CareerProfile, Education, Experience, Project, Certification, Skill, UserSkill, ResumeExtraction
 from .models.core import ProcessingJob, Resume
 from .storage import resume_storage
@@ -185,6 +186,14 @@ def _first_value(item: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _education_value(item: dict[str, Any], *keys: str) -> Any:
+    """Read education aliases, including nested {name: ...} provider objects."""
+    value = _first_value(item, *keys)
+    if isinstance(value, dict):
+        return _first_value(value, "name", "value", "text")
+    return value
+
+
 def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> None:
     user_id = resume.user_id
     profile = db.scalar(select(CareerProfile).where(CareerProfile.user_id == user_id))
@@ -200,17 +209,29 @@ def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> Non
     db.execute(delete(UserSkill).where(UserSkill.source_resume_id == resume.id))
 
     for item in data.get("experiences", []):
+        if not isinstance(item, dict): continue
         company = str(item.get("company_name") or item.get("company") or "").strip(); title = str(item.get("job_title") or item.get("title") or "").strip()
         if company and title: db.add(Experience(user_id=user_id, company_name=company[:200], job_title=title[:200], employment_type=item.get("employment_type"), location=item.get("location"), start_date=_date(item.get("start_date")), end_date=_date(item.get("end_date")), is_current=bool(item.get("is_current", False)), description=item.get("description"), achievements=item.get("achievements"), source_resume_id=resume.id))
     for item in data.get("education", []):
-        # Accept the canonical R1 fields as well as common provider/LLM aliases.
-        # The normalized table requires only institution, so do not silently drop
-        # a valid education item when a model calls it school/university/college.
-        institution = _first_value(item, "institution", "institution_name", "school", "school_name", "university", "university_name", "college", "college_name")
-        qualification = _first_value(item, "qualification", "degree", "degree_name")
-        field_of_study = _first_value(item, "field_of_study", "field", "major", "specialization")
+        if not isinstance(item, dict):
+            continue
+        # Normalize common LLM/provider aliases. Some providers return the
+        # institution as a nested object or use `name` for the institution.
+        institution = _education_value(item, "institution", "institution_name", "school", "school_name", "university", "university_name", "college", "college_name")
+        qualification = _education_value(item, "qualification", "degree", "degree_name")
+        field_of_study = _education_value(item, "field_of_study", "field", "major", "specialization")
+        if not institution:
+            candidate_name = _education_value(item, "name")
+            if candidate_name and (qualification or field_of_study):
+                institution = candidate_name
         if institution:
             db.add(Education(user_id=user_id, institution=str(institution)[:240], qualification=str(qualification)[:160] if qualification else None, field_of_study=str(field_of_study)[:160] if field_of_study else None, start_date=_date(item.get("start_date") or item.get("start_year")), end_date=_date(item.get("end_date") or item.get("end_year")), grade=item.get("grade"), description=item.get("description"), source_resume_id=resume.id))
+
+    # Flush normalized career rows before marking the extraction successful.
+    # This makes persistence failures visible to the Celery task instead of
+    # reporting a successful extraction with missing normalized records.
+    db.flush()
+
     for item in data.get("projects", []):
         name = str(item.get("name") or "").strip()
         if name: db.add(Project(user_id=user_id, name=name[:200], role=item.get("role"), description=item.get("description"), technologies=item.get("technologies"), project_url=item.get("project_url"), start_date=_date(item.get("start_date")), end_date=_date(item.get("end_date")), source_resume_id=resume.id))
