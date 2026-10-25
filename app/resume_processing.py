@@ -212,11 +212,19 @@ def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> Non
         if not isinstance(item, dict): continue
         company = str(item.get("company_name") or item.get("company") or "").strip(); title = str(item.get("job_title") or item.get("title") or "").strip()
         if company and title: db.add(Experience(user_id=user_id, company_name=company[:200], job_title=title[:200], employment_type=item.get("employment_type"), location=item.get("location"), start_date=_date(item.get("start_date")), end_date=_date(item.get("end_date")), is_current=bool(item.get("is_current", False)), description=item.get("description"), achievements=item.get("achievements"), source_resume_id=resume.id))
-    for item in data.get("education", []):
+    education_items = data.get("education", [])
+    if education_items and not isinstance(education_items, list):
+        education_items = [education_items]
+    education_added = 0
+    for item in education_items:
+        if isinstance(item, str):
+            value = item.strip()
+            if value:
+                db.add(Education(user_id=user_id, institution=value[:240], source_resume_id=resume.id))
+                education_added += 1
+            continue
         if not isinstance(item, dict):
             continue
-        # Normalize common LLM/provider aliases. Some providers return the
-        # institution as a nested object or use `name` for the institution.
         institution = _education_value(item, "institution", "institution_name", "school", "school_name", "university", "university_name", "college", "college_name")
         qualification = _education_value(item, "qualification", "degree", "degree_name")
         field_of_study = _education_value(item, "field_of_study", "field", "major", "specialization")
@@ -226,10 +234,13 @@ def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> Non
                 institution = candidate_name
         if institution:
             db.add(Education(user_id=user_id, institution=str(institution)[:240], qualification=str(qualification)[:160] if qualification else None, field_of_study=str(field_of_study)[:160] if field_of_study else None, start_date=_date(item.get("start_date") or item.get("start_year")), end_date=_date(item.get("end_date") or item.get("end_year")), grade=item.get("grade"), description=item.get("description"), source_resume_id=resume.id))
+            education_added += 1
+
+    if education_items and education_added == 0:
+        keys = sorted({key for item in education_items if isinstance(item, dict) for key in item.keys()})
+        raise ValueError(f"R1 education item could not be normalized; received keys: {keys}")
 
     # Flush normalized career rows before marking the extraction successful.
-    # This makes persistence failures visible to the Celery task instead of
-    # reporting a successful extraction with missing normalized records.
     db.flush()
 
     for item in data.get("projects", []):
@@ -250,18 +261,3 @@ def persist_extraction(db: Session, resume: Resume, data: dict[str, Any]) -> Non
             existing.proficiency_level = item.get("proficiency_level"); existing.years_experience = item.get("years_experience"); existing.evidence_notes = item.get("evidence_notes"); existing.source_resume_id = resume.id
         else:
             db.add(UserSkill(user_id=user_id, skill_id=skill.id, proficiency_level=item.get("proficiency_level"), years_experience=item.get("years_experience"), last_used_date=_date(item.get("last_used_date")), evidence_notes=item.get("evidence_notes"), source_resume_id=resume.id))
-
-
-def process_resume(db: Session, job: ProcessingJob) -> None:
-    resume = db.get(Resume, job.resume_id)
-    if not resume: raise ValueError("Resume not found")
-    content = resume_storage.read(resume.storage_key)
-    text = extract_pdf_text(content)
-    data = llm_extract(text)
-    extraction = db.scalar(select(ResumeExtraction).where(ResumeExtraction.resume_id == resume.id, ResumeExtraction.extractor_version == settings.extractor_version))
-    if not extraction:
-        extraction = ResumeExtraction(resume_id=resume.id, extractor_version=settings.extractor_version); db.add(extraction)
-    extraction.status = "succeeded"; extraction.extracted_data = data; extraction.error_code = None; extraction.error_message = None
-    from datetime import datetime, timezone
-    extraction.completed_at = datetime.now(timezone.utc)
-    persist_extraction(db, resume, data)
