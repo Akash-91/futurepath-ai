@@ -5,9 +5,10 @@ from sqlalchemy import select
 from .celery_app import celery_app
 from .db.session import SessionLocal
 from .education_persistence import ensure_education_persisted
+from .education_recovery import recover_education_from_text
 from .models.core import ProcessingJob, Resume
 from .models.career import ResumeExtraction
-from .resume_processing import deterministic_extract, extract_pdf_text, process_resume
+from .resume_processing import deterministic_extract, extract_pdf_text, process_resume, persist_extraction
 from .storage import resume_storage
 
 
@@ -46,24 +47,33 @@ def process_resume_job(self, job_id: str):
         except Exception as exc:
             db.rollback()
 
-            # The LLM can return an education object with the expected keys but
-            # an unusable/empty institution value. The normal R1 persistence
-            # path deliberately rejects that instead of silently losing data.
-            # For this known failure, retry extraction deterministically from
-            # the same stored PDF before consuming a Celery retry.
+            # LLM responses can contain an education object with the expected
+            # keys but an empty/missing institution. Recover only the education
+            # section from the same stored PDF, while preserving the LLM's
+            # other extracted sections. This avoids repeated Celery retries for
+            # a deterministic normalization problem and never invents an
+            # institution name.
             if isinstance(exc, ValueError) and str(exc).startswith("R1 education item could not be normalized"):
                 try:
                     job = db.get(ProcessingJob, job.id)
                     resume = db.get(Resume, job.resume_id) if job.resume_id else None
                     if resume:
                         content = resume_storage.read(resume.storage_key)
-                        fallback = deterministic_extract(extract_pdf_text(content))
-                        if fallback.get("education"):
-                            process_resume_data = fallback
-                            # Reuse the normal persistence implementation by
-                            # temporarily replacing the extraction payload.
-                            from .resume_processing import persist_extraction
-                            persist_extraction(db, resume, process_resume_data)
+                        text = extract_pdf_text(content)
+                        recovered_education = recover_education_from_text(text)
+                        if not recovered_education:
+                            recovered_education = deterministic_extract(text).get("education", [])
+                        if recovered_education:
+                            extraction_data = dict(getattr(exc, "extraction_data", {}) or {})
+                            if not extraction_data:
+                                # Re-run extraction only when necessary to obtain
+                                # the original non-education sections. If an LLM
+                                # is unavailable, deterministic extraction is
+                                # still safe and fully local.
+                                extraction_data = deterministic_extract(text)
+                            extraction_data["education"] = recovered_education
+
+                            persist_extraction(db, resume, extraction_data)
                             extraction = db.scalar(
                                 select(ResumeExtraction).where(
                                     ResumeExtraction.resume_id == resume.id,
@@ -78,7 +88,7 @@ def process_resume_job(self, job_id: str):
                                 )
                                 db.add(extraction)
                                 db.flush()
-                            extraction.extracted_data = process_resume_data
+                            extraction.extracted_data = extraction_data
                             extraction.status = "succeeded"
                             extraction.completed_at = datetime.now(timezone.utc)
                             extraction.error_code = None
