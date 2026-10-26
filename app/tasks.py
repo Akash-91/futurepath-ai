@@ -8,7 +8,7 @@ from .education_persistence import ensure_education_persisted
 from .education_recovery import recover_education_from_text
 from .models.core import ProcessingJob, Resume
 from .models.career import ResumeExtraction
-from .resume_processing import deterministic_extract, extract_pdf_text, process_resume, persist_extraction
+from .resume_processing import deterministic_extract, extract_pdf_text, llm_extract, process_resume, persist_extraction
 from .storage import resume_storage
 
 
@@ -49,10 +49,9 @@ def process_resume_job(self, job_id: str):
 
             # LLM responses can contain an education object with the expected
             # keys but an empty/missing institution. Recover only the education
-            # section from the same stored PDF, while preserving the LLM's
-            # other extracted sections. This avoids repeated Celery retries for
-            # a deterministic normalization problem and never invents an
-            # institution name.
+            # section from the same stored PDF, while preserving the other R1
+            # fields. This avoids repeated Celery retries for a deterministic
+            # normalization problem and never invents an institution name.
             if isinstance(exc, ValueError) and str(exc).startswith("R1 education item could not be normalized"):
                 try:
                     job = db.get(ProcessingJob, job.id)
@@ -64,12 +63,12 @@ def process_resume_job(self, job_id: str):
                         if not recovered_education:
                             recovered_education = deterministic_extract(text).get("education", [])
                         if recovered_education:
-                            extraction_data = dict(getattr(exc, "extraction_data", {}) or {})
-                            if not extraction_data:
-                                # Re-run extraction only when necessary to obtain
-                                # the original non-education sections. If an LLM
-                                # is unavailable, deterministic extraction is
-                                # still safe and fully local.
+                            # Recreate the original extraction shape, then replace
+                            # only the education section with the recovered data.
+                            # With no OpenAI key this stays fully local; when an LLM
+                            # is configured, its other sections are retained.
+                            extraction_data = llm_extract(text)
+                            if not isinstance(extraction_data, dict):
                                 extraction_data = deterministic_extract(text)
                             extraction_data["education"] = recovered_education
 
